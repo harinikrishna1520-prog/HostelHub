@@ -1,0 +1,41 @@
+import { useEffect, useState } from 'react';
+import api from '../services/api.js';
+import { DateText, EmptyState, ErrorMessage, Loading, PageHeading, StatusBadge } from '../components/Primitives.jsx';
+
+export function StudentsPage() {
+  const [students, setStudents] = useState(null);
+  const [search, setSearch] = useState('');
+  const [block, setBlock] = useState('');
+  const [selected, setSelected] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => { const params = new URLSearchParams(); if (search) params.set('search', search); if (block) params.set('block', block); api.get(`/students?${params}`).then(({ data }) => setStudents(data)).catch((requestError) => setError(requestError.response?.data?.message || 'Could not load students.')); }, [search, block]);
+  const blocks = [...new Set((students || []).map((student) => student.hostelBlock).filter(Boolean))];
+  return <><PageHeading eyebrow="RESIDENT DIRECTORY" title="Students" subtitle="Hostel residents and their current room assignments." /><div className="filter-bar"><label className="search-field"><span>⌕</span><input aria-label="Search students" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, email or room" /></label><select aria-label="Filter by block" value={block} onChange={(e) => setBlock(e.target.value)}><option value="">All blocks</option>{blocks.map((item) => <option key={item}>{item}</option>)}</select><span className="result-count">{students?.length ?? '—'} residents</span></div><ErrorMessage>{error}</ErrorMessage>{!students ? <Loading label="Loading students…" /> : students.length === 0 ? <EmptyState>No students found.</EmptyState> : <div className="table-wrap"><table><thead><tr><th>STUDENT</th><th>CONTACT</th><th>ROOM</th><th>REGISTERED</th><th /></tr></thead><tbody>{students.map((student) => <tr key={student._id}><td><div className="student-cell"><span className="avatar">{student.name.slice(0, 1)}</span><strong>{student.name}</strong></div></td><td><span>{student.email}</span><small>{student.phone}</small></td><td><strong>{student.roomNumber}</strong><small>Block {student.hostelBlock}</small></td><td><DateText value={student.createdAt} /></td><td><button className="button button-small button-outline" onClick={() => setSelected(student)}>Details</button></td></tr>)}</tbody></table></div>}{selected && <div className="modal-backdrop" role="presentation" onClick={() => setSelected(null)}><div className="modal-panel" role="dialog" aria-modal="true" aria-label="Student details" onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setSelected(null)} aria-label="Close">×</button><span className="eyebrow">RESIDENT PROFILE</span><div className="modal-student"><span className="avatar avatar-large">{selected.name.slice(0, 1)}</span><h2>{selected.name}</h2><p>{selected.email}</p></div>{[['Phone', selected.phone], ['Room', selected.roomNumber], ['Hostel block', selected.hostelBlock], ['Registration date', new Date(selected.createdAt).toLocaleDateString()]].map(([key, value]) => <div className="fact-row" key={key}><span>{key}</span><strong>{value}</strong></div>)}</div></div>}</>;
+}
+
+const freshRoom = { roomNumber: '', hostelBlock: '', floor: 0, roomType: 'Double', capacity: 2, occupants: [], status: 'Available' };
+export function RoomsPage() {
+  const [rooms, setRooms] = useState(null);
+  const [students, setStudents] = useState([]);
+  const [form, setForm] = useState(freshRoom);
+  const [editing, setEditing] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function load() { try { const [roomResponse, studentResponse] = await Promise.all([api.get('/rooms'), api.get('/students')]); setRooms(roomResponse.data); setStudents(studentResponse.data); } catch (requestError) { setError(requestError.response?.data?.message || 'Could not load room data.'); } }
+  useEffect(() => { load(); }, []);
+  function editRoom(room) { setEditing(room._id); setForm({ roomNumber: room.roomNumber, hostelBlock: room.hostelBlock, floor: room.floor, roomType: room.roomType, capacity: room.capacity, occupants: room.occupants.map((student) => student._id), status: room.status }); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  async function submit(event) {
+    event.preventDefault(); setBusy(true); setError('');
+    try { if (editing) await api.put(`/rooms/${editing}`, form); else await api.post('/rooms', form); setForm(freshRoom); setEditing(''); await load(); }
+    catch (requestError) { setError(requestError.response?.data?.message || 'Could not save room.'); }
+    finally { setBusy(false); }
+  }
+  async function remove(room) {
+    if (!window.confirm(`Delete room ${room.roomNumber}, Block ${room.hostelBlock}?`)) return;
+    try { await api.delete(`/rooms/${room._id}`); setRooms(rooms.filter((item) => item._id !== room._id)); }
+    catch (requestError) { setError(requestError.response?.data?.message || 'Could not delete room.'); }
+  }
+  return <><PageHeading eyebrow="ACCOMMODATION" title="Rooms" subtitle="Manage rooms, capacity and resident assignments." />
+    <form className="notice-editor room-editor" onSubmit={submit}><div className="section-head"><div><span className="eyebrow">{editing ? 'EDIT ROOM' : 'ROOM REGISTER'}</span><h2>{editing ? 'Update room' : 'Add a room'}</h2></div>{editing && <button type="button" className="button button-quiet" onClick={() => { setEditing(''); setForm(freshRoom); }}>Cancel edit</button>}</div><ErrorMessage>{error}</ErrorMessage><div className="form-grid room-form-grid"><label>Room number<input required value={form.roomNumber} onChange={(e) => setForm({ ...form, roomNumber: e.target.value })} /></label><label>Hostel block<input required value={form.hostelBlock} onChange={(e) => setForm({ ...form, hostelBlock: e.target.value })} /></label><label>Floor<input required min="0" type="number" value={form.floor} onChange={(e) => setForm({ ...form, floor: Number(e.target.value) })} /></label><label>Room type<select value={form.roomType} onChange={(e) => setForm({ ...form, roomType: e.target.value })}><option>Single</option><option>Double</option><option>Triple</option><option>Suite</option><option>Dormitory</option></select></label><label>Capacity<input required min="1" type="number" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: Number(e.target.value) })} /></label><label className="span-two">Assign residents <select multiple value={form.occupants} onChange={(e) => setForm({ ...form, occupants: Array.from(e.target.selectedOptions, (option) => option.value) })}>{students.map((student) => <option key={student._id} value={student._id}>{student.name} · {student.email}</option>)}</select><small className="field-help">Use Ctrl or Command to select multiple residents. Assignment updates their room details.</small></label><label>Status<select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option>Available</option><option>Partially Occupied</option><option>Full</option><option>Maintenance</option></select></label></div><div className="form-actions"><button className="button button-dark" disabled={busy}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Add room'} <span>→</span></button></div></form>
+    {!rooms ? <Loading label="Loading rooms…" /> : rooms.length === 0 ? <EmptyState>No rooms found. Add the first room above.</EmptyState> : <div className="table-wrap"><table><thead><tr><th>ROOM</th><th>TYPE / FLOOR</th><th>OCCUPANCY</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>{rooms.map((room) => <tr key={room._id}><td><strong>{room.roomNumber}</strong><small>Block {room.hostelBlock}</small></td><td>{room.roomType}<small>Floor {room.floor}</small></td><td>{room.occupants.length} of {room.capacity}<small>{room.occupants.map((student) => student.name).join(', ') || 'No residents'}</small></td><td><StatusBadge status={room.status} /></td><td><div className="table-actions"><button className="button button-small button-outline" onClick={() => editRoom(room)}>Edit</button><button className="icon-button" aria-label={`Delete room ${room.roomNumber}`} onClick={() => remove(room)}>×</button></div></td></tr>)}</tbody></table></div>}</>;
+}
